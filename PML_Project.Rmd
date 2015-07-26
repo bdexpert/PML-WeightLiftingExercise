@@ -1,0 +1,202 @@
+---
+title: "Weight Lifting Exercise - Quality of Activities"
+author: "Deepak"
+date: "Saturday, July 18, 2015"
+output: html_document
+---
+
+## Synopsis: 
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+The approach proposed for the Weight Lifting Exercises dataset is to investigate "how (well)" an activity was performed by the wearer. The "how (well)" investigation has only received little attention so far, even though it potentially provides useful information for a large variety of applications,such as sports training.
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: 
+*Class A: exactly according to the specification, 
+*Class B: throwing the elbows to the front 
+*Class C: lifting the dumbbell only halfway 
+*Class D: lowering the dumbbell only halfway 
+*Class E: throwing the hips to the front
+
+Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes.
+
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Read more: http://groupware.les.inf.puc-rio.br/har#wle_paper_section
+
+
+## Question: 
+Using the training and test data provided by accelrometers on arm, waistband  and dumbell of participants, how well can we predict the activity quality (Class A-E) on an out of sample observation?
+
+###Load Libraries
+```{r}
+library(AppliedPredictiveModeling)
+library(caret)
+library(rattle)
+library(rpart.plot)
+library(randomForest)
+
+```
+
+## Input Data:
+
+First we import the data and identify whether train and test data have identical columns/variables
+
+```{r}
+setwd("C:\\Me\\Projects\\PML-WeightLifting")
+training_url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+training_file = "pml-training.csv"
+if (!file.exists(training_file)){download.file(url=testing_url, destfile=training_file)}
+
+testing_url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+testing_file = "pml-testing.csv"
+if (!file.exists(testing_file)) {download.file(url=testing_url, destfile=testing_file)}
+
+# Import the data and convert blanks and DIV errors as NA.
+train = read.csv("pml-training.csv", na.strings=c('NA','','#DIV/0!'), header=TRUE)
+train_cols = colnames(train)
+test = read.csv("pml-testing.csv", na.strings=c('NA','','#DIV/0!'), header=TRUE)
+test_cols = colnames(test)
+
+# Verify that the column names (excluding classe and problem_id) are identical in the training and test set.
+all.equal(train_cols[1:length(train_cols)-1], test_cols[1:length(test_cols)-1])
+
+```
+
+##Features
+
+```{r}
+
+#Remove NA columns from training and test dataset
+
+NAindex = apply(train,2,function(x) {sum(is.na(x))}) 
+trainNA = train[,which(NAindex == 0)]
+testNA = test[,which(NAindex == 0)]
+
+train_cols = colnames(trainNA)
+test_cols = colnames(testNA)
+all.equal(train_cols[1:length(train_cols)-1], test_cols[1:length(test_cols)-1])
+
+#Remove unnecessary columns like timestamps, usernames, etc
+trainNA = trainNA[,8:length(names(trainNA))]
+testNA = testNA[,8:length(names(testNA))]
+
+#center and scale the variables
+#numvect = which(lapply(trainNA, class) %in% "numeric")
+
+preproc = preProcess(trainNA[,-53],method=c('center', 'scale'))
+trainproc = predict(preproc, trainNA[,-53])
+trainproc$classe = trainNA$classe
+
+testproc = predict(preproc,testNA[,-53])
+
+#identify near zero variables that have virtually no variability
+nzw = nearZeroVar(trainproc, saveMetrics=TRUE)
+nzw
+```
+
+As can be seen there are no zero variables; all nzw values are false. 
+
+
+##Model
+
+###Validation Data Set
+
+We are provided with a training set (19,622 obs) and test set(20 obs). Create a validation set out of the training set in a 60%-40% ratio.
+
+```{r}
+set.seed(12031987)
+
+inTrain = createDataPartition(trainproc$classe, p = 0.6, list=FALSE)
+training = trainproc[inTrain,]
+crossValidation = trainproc[-inTrain,]
+nrow(training)
+nrow(crossValidation)
+
+```
+
+I have decided to try classification trees and random forest based on their accuracy of prediction.
+
+##Evaluation
+
+###Classification Trees
+```{r}
+modFit <- train(classe ~ ., data = training, method="rpart")
+print(modFit, digits=3)
+
+```
+
+```{r}
+print(modFit$finalModel, digits=3)
+
+```
+
+```{r}
+fancyRpartPlot(modFit$finalModel)
+
+```
+
+Predictions on the Vaidation Set
+
+```{r}
+predtree = predict(modFit, newdata=crossValidation)
+print(confusionMatrix(predtree, crossValidation$classe), digits=4)
+```
+
+
+###Random Forest
+
+Train the model on training data set with method cross validation 
+
+```{r}
+modFitrf <- train(classe ~., method="rf", data=training, trControl=trainControl(method='cv'), number=5, allowParallel=TRUE )
+print(modFitrf, digits=3)
+```
+
+Predictions on validation data set
+```{r}
+predrf <- predict(modFitrf, newdata=crossValidation)
+print(confusionMatrix(predrf, crossValidation$classe), digits=4)
+```
+
+#Conclusion
+
+Classification Trees
+  	        Accuracy
+Training		0.515
+Validation	0.5025
+
+
+Random Forests
+		        Accuracy
+Training		0.990
+Validation	0.9932
+
+As can be seen from the above analysis, the Random Forest model has the best accuracy.
+Use this model to predict on the test set.
+
+The out of sample error rate is 1 - 0.9932 = 0.0068
+
+```{r}
+# Run against testing set.
+predtest <- predict(modFitrf, newdata=testproc)
+predtest
+```
+
+
+#Appendix
+
+Code to Generate the files for submission
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(predtest)
+```
+
